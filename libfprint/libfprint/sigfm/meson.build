@@ -1,7 +1,12 @@
 
 sigfm_sources = ['sigfm.cpp']
 
-opencv = dependency('opencv4', required: true)
+# 'opencv4' was renamed to 'opencv5' in the opencv 5.1 Arch package;
+# accept the old name when present (e.g. on opencv 5.0 systems), fall back to the new one.
+opencv = dependency('opencv4', required: false)
+if not opencv.found()
+    opencv = dependency('opencv5', required: true)
+endif
 doctest = dependency('doctest', required: false, version: ['>=2.0.0', '<3.0.0'])
 
 libsigfm = static_library('sigfm',
