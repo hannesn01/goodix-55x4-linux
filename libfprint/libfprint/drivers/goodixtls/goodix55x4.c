@@ -78,6 +78,10 @@ struct _FpiDeviceGoodixTls55X4 {
   // that reset every later scan takes the warm path and fails instantly,
   // forever. Clearing it on failure costs one cold re-activate and self-heals.
   gboolean active;
+
+  // Number of PSK (re)provisioning write attempts in the current activation.
+  // Bounds the write -> read-back -> retry loop added in check_psk_write().
+  guint psk_write_attempts;
 };
 
 G_DECLARE_FINAL_TYPE(FpiDeviceGoodixTls55X4, fpi_device_goodixtls55x4, FPI,
@@ -199,6 +203,18 @@ static void check_preset_psk_read(FpDevice *dev, gboolean success,
     return;
   }
 
+  /* Reached after a write in this activation (read-back mismatch): fail the
+   * activation after a bounded number of attempts instead of looping. */
+  if (FPI_DEVICE_GOODIXTLS55X4(dev)->psk_write_attempts >=
+      GOODIX_55X4_MAX_PSK_WRITE_ATTEMPTS) {
+    g_set_error(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "PSK provisioning failed: sensor hash still mismatched after "
+                "%u write attempts",
+                FPI_DEVICE_GOODIXTLS55X4(dev)->psk_write_attempts);
+    fpi_ssm_mark_failed(user_data, error);
+    return;
+  }
+
   /* Device was provisioned with a different PSK (e.g. by Windows). Fall through
    * to ACTIVATE_WRITE_PSK to (re)provision it with the known white-box PSK so
    * the all-zeros TLS-PSK handshake will succeed. */
@@ -219,8 +235,10 @@ static void check_psk_write(FpDevice *dev, gboolean success, gpointer user_data,
     fpi_ssm_mark_failed(user_data, error);
     return;
   }
-  fp_info("Device PSK (re)provisioned successfully");
-  fpi_ssm_next_state(user_data);
+  fp_info("Device PSK (re)provisioned successfully; verifying read-back");
+  /* Read the hash back: a match jumps to ACTIVATE_RESET, a mismatch lands on
+   * the bounded retry/fail path in check_preset_psk_read(). */
+  fpi_ssm_jump_to_state(user_data, ACTIVATE_CHECK_PSK);
 }
 static void check_idle(FpDevice *dev, gpointer user_data, GError *err) {
 
@@ -289,6 +307,7 @@ static void activate_run_state(FpiSsm *ssm, FpDevice *dev) {
   switch (fpi_ssm_get_cur_state(ssm)) {
   case ACTIVATE_READ_AND_NOP:
     g_print("Read and NO OP\n");
+    FPI_DEVICE_GOODIXTLS55X4(dev)->psk_write_attempts = 0;
     // Nop seems to clear the previous command buffer. But we are
     // unable to do so.
     goodix_start_read_loop(dev);
@@ -318,6 +337,7 @@ static void activate_run_state(FpiSsm *ssm, FpDevice *dev) {
 
   case ACTIVATE_WRITE_PSK:
     g_print("Writing PSK\n");
+    FPI_DEVICE_GOODIXTLS55X4(dev)->psk_write_attempts += 1;
     goodix_send_preset_psk_write(dev, GOODIX_55X4_PSK_WRITE_FLAGS,
                                  goodix_55x4_psk_white_box,
                                  sizeof(goodix_55x4_psk_white_box), NULL,

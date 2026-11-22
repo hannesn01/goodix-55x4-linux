@@ -31,6 +31,8 @@
 
 #define GOODIX_55X4_PSK_FLAGS (0xbb020007)
 #define GOODIX_55X4_PSK_WRITE_FLAGS (0xbb010003)
+/* Max PSK writes per activation before read-back failure aborts activation. */
+#define GOODIX_55X4_MAX_PSK_WRITE_ATTEMPTS 2
 
 /* "White box" PSK blob written to the device to (re)provision it so that the
  * device's stored PMK hash becomes goodix_55x4_psk_0 and the all-zeros TLS-PSK
